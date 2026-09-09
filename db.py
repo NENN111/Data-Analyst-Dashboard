@@ -34,6 +34,18 @@ def database_url() -> str:
 engine = create_engine(database_url(), pool_pre_ping=True, pool_recycle=1800)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
+# Запросы дашборда независимы и не требуют общей транзакции. Отдельный
+# engine сохраняет транзакции ETL и не запускает лишнюю проверку hstore:
+# навыки в этом проекте хранятся в JSON, а не в hstore.
+read_engine = create_engine(
+    database_url(),
+    isolation_level="AUTOCOMMIT",
+    use_native_hstore=False,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+    connect_args={"connect_timeout": 15},
+)
+
 
 class Base(DeclarativeBase):
     """Базовый класс SQLAlchemy ORM-моделей."""

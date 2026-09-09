@@ -5,6 +5,37 @@ Streamlit-дашборд анализирует вакансии `Data Analyst` 
 
 ## Локальный запуск
 
+### На своём ПК с базой на Render
+
+Локальный PostgreSQL и Docker для этого варианта не нужны.
+
+1. Создайте окружение и установите зависимости:
+
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
+
+2. В корне проекта создайте `.env` и укажите `DATABASE_URL`: полный **External Database URL**
+   из Render. Для шифрования добавьте `?sslmode=require` (или `&sslmode=require`,
+   если в URL уже есть параметры). `.env` и `.venv` исключены из Git.
+
+3. Запустите `start-dashboard.cmd` двойным щелчком либо из PowerShell:
+
+   ```powershell
+   .\start-dashboard.cmd
+   ```
+
+   Дашборд доступен по адресу http://localhost:8501. Чтобы остановить его,
+   нажмите Ctrl+C в окне запуска. Следующий запуск — той же командой.
+
+Кнопка «Обновить данные» перечитывает базу, минуя пятиминутный кэш.
+Запуск дашборда сам по себе не загружает вакансии из HH.ru: для этого служит ETL.
+Для независимых SELECT дашборд использует отдельное соединение с AUTOCOMMIT
+без проверки hstore; транзакционное соединение ETL остаётся отдельным.
+
+### С локальной PostgreSQL в Docker
+
 1. Создайте `.env` из шаблона и укажите строку подключения PostgreSQL:
 
    ```powershell

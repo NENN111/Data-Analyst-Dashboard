@@ -5,7 +5,7 @@ import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
 
-from db import engine
+from db import read_engine as engine
 
 
 REMOTE_SCHEDULE = "Удаленная работа"
@@ -73,12 +73,19 @@ st.set_page_config(page_title="HH.ru: Data Analyst", page_icon="📊", layout="w
 st.title("Вакансии Data Analyst на HH.ru")
 st.caption("Источник: API HH.ru. Данные хранятся в PostgreSQL.")
 
+if st.button("Обновить данные"):
+    load_data.clear()
+    load_salary_by_experience.clear()
+
 try:
     df = load_data()
 except Exception as error:
     st.error(f"Не удалось прочитать PostgreSQL: {error}")
-    st.info("Проверьте .env, запустите PostgreSQL и выполните `python etl.py`.")
+    st.info("Проверьте DATABASE_URL в .env и доступность PostgreSQL.")
     st.stop()
+
+if df.empty:
+    st.info("В базе пока нет вакансий. После загрузки нажмите «Обновить данные».")
 
 dashboard_tab, sql_tab = st.tabs(["Дашборд", "SQL Playground"])
 with dashboard_tab:
