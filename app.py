@@ -1,9 +1,12 @@
 """Streamlit-дашборд вакансий Data Analyst из PostgreSQL."""
 
+import time
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from db import read_engine as engine
 
@@ -15,17 +18,40 @@ MEDIAN_SALARY_SQL = """CASE
 END"""
 
 
+def read_sql(query) -> pd.DataFrame:
+    """Повторяет SELECT после кратковременного разрыва внешнего соединения."""
+    for attempt in range(3):
+        try:
+            return pd.read_sql_query(query, engine)
+        except OperationalError:
+            engine.dispose()
+            if attempt == 2:
+                raise
+            time.sleep(2**attempt)
+    raise RuntimeError("Не удалось выполнить SQL-запрос")
+
+
 @st.cache_data(ttl=300)
 def load_data() -> pd.DataFrame:
-    """Кэшированно загружает данные PostgreSQL для всех визуализаций."""
-    query = text(f"""
-        SELECT id, title, salary_from, salary_to, salary_gross, currency,
-               experience, employment, schedule, city, skills, url, published_at,
-               {MEDIAN_SALARY_SQL} AS median_salary
-        FROM vacancies
-        ORDER BY published_at DESC NULLS LAST
-    """)
-    return pd.read_sql_query(query, engine)
+    """Кэшированно загружает данные небольшими страницами из PostgreSQL."""
+    frames: list[pd.DataFrame] = []
+    page_size = 5
+    offset = 0
+    while True:
+        query = text(f"""
+            SELECT id, title, salary_from, salary_to, salary_gross, currency,
+                   experience, employment, schedule, city, skills, url, published_at,
+                   {MEDIAN_SALARY_SQL} AS median_salary
+            FROM vacancies
+            ORDER BY published_at DESC NULLS LAST, id
+            LIMIT {page_size} OFFSET {offset}
+        """)
+        page = read_sql(query)
+        frames.append(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return pd.concat(frames, ignore_index=True)
 
 
 @st.cache_data(ttl=300)
@@ -40,7 +66,7 @@ def load_salary_by_experience() -> pd.DataFrame:
         GROUP BY experience
         ORDER BY average_salary_rub DESC NULLS LAST
     """)
-    return pd.read_sql_query(query, engine)
+    return read_sql(query)
 
 
 def apply_filters(data: pd.DataFrame) -> pd.DataFrame:
@@ -69,9 +95,12 @@ def format_rubles(value: float | None) -> str:
     return "—" if pd.isna(value) else f"{value:,.0f} ₽".replace(",", " ")
 
 
-st.set_page_config(page_title="HH.ru: Data Analyst", page_icon="📊", layout="wide")
-st.title("Вакансии Data Analyst на HH.ru")
-st.caption("Источник: API HH.ru. Данные хранятся в PostgreSQL.")
+st.set_page_config(page_title="Вакансии аналитиков", page_icon="📊", layout="wide")
+st.title("Вакансии аналитиков данных")
+st.caption(
+    "Источник: открытые данные [«Работа России»](https://trudvsem.ru/). "
+    "Хранилище: PostgreSQL."
+)
 
 if st.button("Обновить данные"):
     load_data.clear()
@@ -86,6 +115,13 @@ except Exception as error:
 
 if df.empty:
     st.info("В базе пока нет вакансий. После загрузки нажмите «Обновить данные».")
+else:
+    published = pd.to_datetime(df["published_at"], errors="coerce")
+    if published.notna().any():
+        st.caption(
+            "Период публикации данных: "
+            f"{published.min():%d.%m.%Y} — {published.max():%d.%m.%Y}"
+        )
 
 dashboard_tab, sql_tab = st.tabs(["Дашборд", "SQL Playground"])
 with dashboard_tab:
@@ -103,19 +139,19 @@ with dashboard_tab:
     with left:
         skills_chart = px.bar(top_skills(filtered_df), x="Вакансий", y="Навык", orientation="h", title="Топ-10 навыков")
         skills_chart.update_layout(yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(skills_chart, use_container_width=True)
+        st.plotly_chart(skills_chart, width="stretch")
     with right:
         salary_chart = px.box(rub_salary, x="experience", y="median_salary", points="outliers", title="Зарплата по уровню опыта", labels={"experience": "Опыт", "median_salary": "Зарплата, ₽"})
-        st.plotly_chart(salary_chart, use_container_width=True)
+        st.plotly_chart(salary_chart, width="stretch")
 
     st.subheader("Вакансии")
     table = filtered_df.rename(columns={"title": "Название", "city": "Город", "experience": "Опыт", "schedule": "График", "salary_from": "Зарплата от", "salary_to": "Зарплата до", "currency": "Валюта", "skills": "Навыки", "url": "Ссылка"})
-    st.dataframe(table[["Название", "Город", "Опыт", "График", "Зарплата от", "Зарплата до", "Валюта", "Навыки", "Ссылка"]], hide_index=True, use_container_width=True, column_config={"Ссылка": st.column_config.LinkColumn("Ссылка", display_text="Открыть вакансию")})
+    st.dataframe(table[["Название", "Город", "Опыт", "График", "Зарплата от", "Зарплата до", "Валюта", "Навыки", "Ссылка"]], hide_index=True, width="stretch", column_config={"Ссылка": st.column_config.LinkColumn("Ссылка", display_text="Открыть вакансию")})
 
 with sql_tab:
     st.subheader("Средняя зарплата по грейдам")
     st.caption("Результат SQL-запроса с GROUP BY experience; учитываются только рублёвые зарплаты.")
     try:
-        st.dataframe(load_salary_by_experience(), hide_index=True, use_container_width=True)
+        st.dataframe(load_salary_by_experience(), hide_index=True, width="stretch")
     except Exception as error:
         st.error(f"Не удалось выполнить агрегирующий запрос: {error}")

@@ -1,4 +1,4 @@
-name: Daily HH ETL
+name: Daily Vacancies ETL
 
 on:
   schedule:
@@ -25,5 +25,5 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Load fresh HH.ru vacancies
-        run: python etl.py --pages 5
+      - name: Load fresh vacancies from Работа России
+        run: python trudvsem_etl.py --pages 5
