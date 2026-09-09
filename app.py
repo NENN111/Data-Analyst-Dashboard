@@ -1,4 +1,4 @@
-"""Streamlit-дашборд вакансий Data Analyst из PostgreSQL."""
+"""Streamlit-дашборд вакансий аналитиков из PostgreSQL."""
 
 import time
 
@@ -7,6 +7,7 @@ import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.sql.elements import TextClause
 
 from db import read_engine as engine
 
@@ -18,7 +19,7 @@ MEDIAN_SALARY_SQL = """CASE
 END"""
 
 
-def read_sql(query) -> pd.DataFrame:
+def read_sql(query: TextClause) -> pd.DataFrame:
     """Повторяет SELECT после кратковременного разрыва внешнего соединения."""
     for attempt in range(3):
         try:
@@ -35,6 +36,7 @@ def read_sql(query) -> pd.DataFrame:
 def load_data() -> pd.DataFrame:
     """Кэшированно загружает данные небольшими страницами из PostgreSQL."""
     frames: list[pd.DataFrame] = []
+    # Небольшие ответы стабильнее проходят через внешнее соединение Render.
     page_size = 5
     offset = 0
     while True:
@@ -76,8 +78,12 @@ def apply_filters(data: pd.DataFrame) -> pd.DataFrame:
     schedules = sorted(data["schedule"].dropna().unique())
     experiences = sorted(data["experience"].dropna().unique())
     selected_cities = st.sidebar.multiselect("Город", cities, default=cities)
-    selected_schedules = st.sidebar.multiselect("График работы", schedules, default=schedules)
-    selected_experience = st.sidebar.multiselect("Опыт", experiences, default=experiences)
+    selected_schedules = st.sidebar.multiselect(
+        "График работы", schedules, default=schedules
+    )
+    selected_experience = st.sidebar.multiselect(
+        "Опыт", experiences, default=experiences
+    )
     return data[
         data["city"].isin(selected_cities)
         & data["schedule"].isin(selected_schedules)
@@ -87,8 +93,16 @@ def apply_filters(data: pd.DataFrame) -> pd.DataFrame:
 
 def top_skills(data: pd.DataFrame) -> pd.DataFrame:
     """Разворачивает JSON-массив навыков и считает десять самых частых."""
-    skills = data["skills"].apply(lambda value: value if isinstance(value, list) else []).explode()
-    return skills.dropna().value_counts().head(10).rename_axis("Навык").reset_index(name="Вакансий")
+    skills = data["skills"].apply(
+        lambda value: value if isinstance(value, list) else []
+    ).explode()
+    return (
+        skills.dropna()
+        .value_counts()
+        .head(10)
+        .rename_axis("Навык")
+        .reset_index(name="Вакансий")
+    )
 
 
 def format_rubles(value: float | None) -> str:
@@ -126,8 +140,15 @@ else:
 dashboard_tab, sql_tab = st.tabs(["Дашборд", "SQL Playground"])
 with dashboard_tab:
     filtered_df = apply_filters(df)
-    rub_salary = filtered_df.loc[filtered_df["currency"].eq("RUR") & filtered_df["median_salary"].notna()]
-    remote_share = filtered_df["schedule"].eq(REMOTE_SCHEDULE).mean() * 100 if len(filtered_df) else 0
+    rub_salary = filtered_df.loc[
+        filtered_df["currency"].eq("RUR")
+        & filtered_df["median_salary"].notna()
+    ]
+    remote_share = (
+        filtered_df["schedule"].eq(REMOTE_SCHEDULE).mean() * 100
+        if len(filtered_df)
+        else 0
+    )
 
     total, salary, remote = st.columns(3)
     total.metric("Всего вакансий", f"{len(filtered_df):,}".replace(",", " "))
@@ -137,20 +158,69 @@ with dashboard_tab:
 
     left, right = st.columns(2)
     with left:
-        skills_chart = px.bar(top_skills(filtered_df), x="Вакансий", y="Навык", orientation="h", title="Топ-10 навыков")
+        skills_chart = px.bar(
+            top_skills(filtered_df),
+            x="Вакансий",
+            y="Навык",
+            orientation="h",
+            title="Топ-10 навыков",
+        )
         skills_chart.update_layout(yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(skills_chart, width="stretch")
     with right:
-        salary_chart = px.box(rub_salary, x="experience", y="median_salary", points="outliers", title="Зарплата по уровню опыта", labels={"experience": "Опыт", "median_salary": "Зарплата, ₽"})
+        salary_chart = px.box(
+            rub_salary,
+            x="experience",
+            y="median_salary",
+            points="outliers",
+            title="Зарплата по уровню опыта",
+            labels={"experience": "Опыт", "median_salary": "Зарплата, ₽"},
+        )
         st.plotly_chart(salary_chart, width="stretch")
 
     st.subheader("Вакансии")
-    table = filtered_df.rename(columns={"title": "Название", "city": "Город", "experience": "Опыт", "schedule": "График", "salary_from": "Зарплата от", "salary_to": "Зарплата до", "currency": "Валюта", "skills": "Навыки", "url": "Ссылка"})
-    st.dataframe(table[["Название", "Город", "Опыт", "График", "Зарплата от", "Зарплата до", "Валюта", "Навыки", "Ссылка"]], hide_index=True, width="stretch", column_config={"Ссылка": st.column_config.LinkColumn("Ссылка", display_text="Открыть вакансию")})
+    table = filtered_df.rename(
+        columns={
+            "title": "Название",
+            "city": "Город",
+            "experience": "Опыт",
+            "schedule": "График",
+            "salary_from": "Зарплата от",
+            "salary_to": "Зарплата до",
+            "currency": "Валюта",
+            "skills": "Навыки",
+            "url": "Ссылка",
+        }
+    )
+    st.dataframe(
+        table[
+            [
+                "Название",
+                "Город",
+                "Опыт",
+                "График",
+                "Зарплата от",
+                "Зарплата до",
+                "Валюта",
+                "Навыки",
+                "Ссылка",
+            ]
+        ],
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Ссылка": st.column_config.LinkColumn(
+                "Ссылка", display_text="Открыть вакансию"
+            )
+        },
+    )
 
 with sql_tab:
     st.subheader("Средняя зарплата по грейдам")
-    st.caption("Результат SQL-запроса с GROUP BY experience; учитываются только рублёвые зарплаты.")
+    st.caption(
+        "Результат SQL-запроса с GROUP BY experience; "
+        "учитываются только рублёвые зарплаты."
+    )
     try:
         st.dataframe(load_salary_by_experience(), hide_index=True, width="stretch")
     except Exception as error:

@@ -18,7 +18,10 @@ from db import init_db, upsert_vacancies
 
 API_URL = "https://opendata.trudvsem.ru/api/v1/vacancies"
 HEADERS = {
-    "User-Agent": "DataAnalystDashboard/2.0 (+https://github.com/NENN111/Data-Analyst-Dashboard)"
+    "User-Agent": (
+        "DataAnalystDashboard/2.0 "
+        "(+https://github.com/NENN111/Data-Analyst-Dashboard)"
+    )
 }
 SKILL_PATTERNS = {
     "SQL": r"\bsql\b",

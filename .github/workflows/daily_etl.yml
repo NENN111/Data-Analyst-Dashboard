@@ -2,7 +2,7 @@ name: Daily Vacancies ETL
 
 on:
   schedule:
-    # Every day at 03:00 UTC.
+    # Ежедневно в 03:00 UTC.
     - cron: "0 3 * * *"
   workflow_dispatch:
 
@@ -10,20 +10,20 @@ jobs:
   collect-vacancies:
     runs-on: ubuntu-latest
     env:
-      # Add the external Render database URL as this GitHub Actions secret.
+      # В секрете хранится External Database URL из Render.
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
-      - name: Check out repository
+      - name: Получить код репозитория
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Настроить Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - name: Install dependencies
+      - name: Установить зависимости
         run: pip install -r requirements.txt
 
-      - name: Load fresh vacancies from Работа России
+      - name: Загрузить вакансии из Работа России
         run: python trudvsem_etl.py --pages 5

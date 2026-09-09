@@ -41,6 +41,74 @@ PostgreSQL; повторная загрузка обновляет записи 
 ETL обращается к открытому API, нормализует зарплаты, регионы, графики и навыки,
 а затем обновляет PostgreSQL. Для независимых запросов используется AUTOCOMMIT.
 
+## Полезные SELECT-запросы
+
+Запросы можно выполнять в Render Shell, `psql`, DBeaver или другом клиенте,
+подключённом к той же базе. Они только читают таблицу `vacancies`.
+
+Общее состояние данных:
+
+```sql
+SELECT
+    COUNT(*) AS vacancies_total,
+    COUNT(*) FILTER (
+        WHERE salary_from IS NOT NULL OR salary_to IS NOT NULL
+    ) AS vacancies_with_salary,
+    COUNT(DISTINCT city) AS cities_total,
+    MIN(published_at) AS oldest_publication,
+    MAX(published_at) AS newest_publication
+FROM vacancies;
+```
+
+Последние опубликованные вакансии:
+
+```sql
+SELECT title, city, salary_from, salary_to, currency, published_at, url
+FROM vacancies
+ORDER BY published_at DESC NULLS LAST
+LIMIT 20;
+```
+
+Средняя оценка зарплаты по требуемому опыту:
+
+```sql
+SELECT
+    COALESCE(experience, 'Не указан') AS experience,
+    COUNT(*) AS vacancies_count,
+    ROUND(AVG(
+        CASE
+            WHEN salary_from IS NOT NULL AND salary_to IS NOT NULL
+                THEN (salary_from + salary_to) / 2.0
+            ELSE COALESCE(salary_from, salary_to)
+        END
+    )) AS average_salary_rub
+FROM vacancies
+WHERE currency = 'RUR'
+  AND COALESCE(salary_from, salary_to) IS NOT NULL
+GROUP BY experience
+ORDER BY average_salary_rub DESC NULLS LAST;
+```
+
+Десять самых частых навыков из JSON-массивов:
+
+```sql
+SELECT skill, COUNT(*) AS vacancies_count
+FROM vacancies
+CROSS JOIN LATERAL json_array_elements_text(skills) AS skill
+GROUP BY skill
+ORDER BY vacancies_count DESC, skill
+LIMIT 10;
+```
+
+Распределение вакансий по регионам:
+
+```sql
+SELECT city, COUNT(*) AS vacancies_count
+FROM vacancies
+GROUP BY city
+ORDER BY vacancies_count DESC, city;
+```
+
 ### С локальной PostgreSQL в Docker
 
 1. Создайте `.env` из шаблона и укажите строку подключения PostgreSQL:

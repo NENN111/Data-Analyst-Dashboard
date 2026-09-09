@@ -8,13 +8,22 @@ from datetime import datetime
 from typing import Any
 
 from dotenv import load_dotenv
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, JSON, String, Text, create_engine
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    create_engine,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import NullPool
 
-load_dotenv()  # .env не коммитится и позволяет хранить пароль вне исходного кода.
+load_dotenv()  # Локальные секреты читаются из игнорируемого Git файла .env.
 
 
 def database_url() -> str:
@@ -42,9 +51,8 @@ engine = create_engine(
     connect_args={"connect_timeout": 15},
 )
 
-# Запросы дашборда независимы и не требуют общей транзакции. Отдельный
-# engine сохраняет транзакции ETL и не запускает лишнюю проверку hstore:
-# навыки в этом проекте хранятся в JSON, а не в hstore.
+# Дашборд использует тот же настроенный engine; навыки хранятся в JSON,
+# поэтому автоматическое определение PostgreSQL hstore отключено выше.
 read_engine = engine
 
 
