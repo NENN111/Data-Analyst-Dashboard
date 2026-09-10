@@ -150,3 +150,13 @@ ORDER BY vacancies_count DESC, city;
 `postgresql+psycopg2://user:password@host:5432/database`. URL Render с
 префиксом `postgres://` также поддерживается: приложение заменит его на
 `postgresql://` перед созданием SQLAlchemy engine.
+
+## Имена инфраструктурных ресурсов
+
+Новые локальные окружения используют нейтральные имена `data-analyst-postgres` и
+`vacancies_analytics`. Имена `hh-vacancies-dashboard`, `hh-vacancies-postgres`,
+`hh_analytics` и `hh_user` в `render.yaml` намеренно сохранены: они идентифицируют
+уже существующие ресурсы Render. Простая замена этих значений в Blueprint может
+создать новые ресурсы, а `databaseName` и `user` существующей Render Postgres
+изменить нельзя. Полное переименование требует создания новой базы, переноса
+данных, переключения `DATABASE_URL` и только затем удаления старой базы.

@@ -1,5 +1,7 @@
 services:
   - type: web
+    # Имена существующих Render-ресурсов являются их Blueprint-идентификаторами.
+    # Не меняйте их здесь без предварительного переименования ресурсов в Render.
     name: hh-vacancies-dashboard
     runtime: python
     # Платный веб-сервис не приостанавливается при отсутствии трафика.
@@ -14,6 +16,8 @@ services:
           property: connectionString
 
 databases:
+  # databaseName и user неизменяемы после создания Render Postgres.
+  # Для полного переименования нужна миграция в новый экземпляр базы данных.
   - name: hh-vacancies-postgres
     databaseName: hh_analytics
     user: hh_user
