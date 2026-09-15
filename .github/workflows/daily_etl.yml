@@ -12,6 +12,8 @@ jobs:
     env:
       # В секрете хранится External Database URL из Render.
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Перманентный OAuth2 access token активированного приложения Хабр Карьеры.
+      HABR_CAREER_ACCESS_TOKEN: ${{ secrets.HABR_CAREER_ACCESS_TOKEN }}
     steps:
       - name: Получить код репозитория
         uses: actions/checkout@v4
@@ -27,3 +29,6 @@ jobs:
 
       - name: Загрузить вакансии из Работа России
         run: python trudvsem_etl.py --pages 5
+
+      - name: Загрузить вакансии из Хабр Карьеры
+        run: python habr_career_etl.py

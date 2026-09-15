@@ -112,7 +112,9 @@ def format_rubles(value: float | None) -> str:
 st.set_page_config(page_title="Вакансии аналитиков", page_icon="📊", layout="wide")
 st.title("Вакансии аналитиков данных")
 st.caption(
-    "Источник: открытые данные [«Работа России»](https://trudvsem.ru/). "
+    "Источники: открытые данные [«Работа России»](https://trudvsem.ru/) и "
+    "вакансии авторизованного аккаунта "
+    "[«Хабр Карьеры»](https://career.habr.com/). "
     "Хранилище: PostgreSQL."
 )
 
