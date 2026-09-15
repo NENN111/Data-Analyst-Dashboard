@@ -30,5 +30,8 @@ jobs:
       - name: Загрузить вакансии из Работа России
         run: python trudvsem_etl.py --pages 5
 
+      - name: Загрузить публичные вакансии из Хабр Карьеры
+        run: python habr_public_etl.py
+
       - name: Загрузить вакансии из Хабр Карьеры
         run: python habr_career_etl.py
