@@ -1,5 +1,6 @@
 """Streamlit-дашборд вакансий аналитиков из PostgreSQL."""
 
+from pathlib import Path
 import time
 
 import pandas as pd
@@ -17,6 +18,7 @@ MEDIAN_SALARY_SQL = """CASE
     WHEN salary_from IS NOT NULL AND salary_to IS NOT NULL THEN (salary_from + salary_to) / 2.0
     ELSE COALESCE(salary_from, salary_to)
 END"""
+FILTER_KEYS = ("search_query", "cities", "schedules", "experiences", "salary_only")
 
 
 def read_sql(query: TextClause) -> pd.DataFrame:
@@ -34,9 +36,9 @@ def read_sql(query: TextClause) -> pd.DataFrame:
 
 @st.cache_data(ttl=300)
 def load_data() -> pd.DataFrame:
-    """Кэшированно загружает данные небольшими страницами из PostgreSQL."""
+    """Кэшированно загружает данные страницами из PostgreSQL."""
     frames: list[pd.DataFrame] = []
-    # Небольшие ответы стабильнее проходят через внешнее соединение Render.
+    # Короткие ответы устойчивее проходят через внешнее соединение Render.
     page_size = 5
     offset = 0
     while True:
@@ -53,46 +55,44 @@ def load_data() -> pd.DataFrame:
         if len(page) < page_size:
             break
         offset += page_size
-    return pd.concat(frames, ignore_index=True)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-@st.cache_data(ttl=300)
-def load_salary_by_experience() -> pd.DataFrame:
-    """Агрегирующий SQL-запрос для вкладки SQL Playground."""
-    query = text(f"""
-        SELECT COALESCE(experience, 'Не указан') AS experience,
-               COUNT(*) AS vacancies_count,
-               ROUND(AVG({MEDIAN_SALARY_SQL})) AS average_salary_rub
-        FROM vacancies
-        WHERE currency = 'RUR' AND COALESCE(salary_from, salary_to) IS NOT NULL
-        GROUP BY experience
-        ORDER BY average_salary_rub DESC NULLS LAST
-    """)
-    return read_sql(query)
-
-
-def apply_filters(data: pd.DataFrame) -> pd.DataFrame:
-    """Отображает фильтры в боковой панели и возвращает результат."""
-    st.sidebar.header("Фильтры")
-    cities = sorted(data["city"].dropna().unique())
-    schedules = sorted(data["schedule"].dropna().unique())
-    experiences = sorted(data["experience"].dropna().unique())
-    selected_cities = st.sidebar.multiselect("Город", cities, default=cities)
-    selected_schedules = st.sidebar.multiselect(
-        "График работы", schedules, default=schedules
-    )
-    selected_experience = st.sidebar.multiselect(
-        "Опыт", experiences, default=experiences
-    )
-    return data[
-        data["city"].isin(selected_cities)
-        & data["schedule"].isin(selected_schedules)
-        & data["experience"].isin(selected_experience)
-    ].copy()
+def filter_data(
+    data: pd.DataFrame,
+    query: str = "",
+    cities: list[str] | None = None,
+    schedules: list[str] | None = None,
+    experiences: list[str] | None = None,
+    salary_only: bool = False,
+) -> pd.DataFrame:
+    """Фильтрует выборку; пустой список означает отсутствие ограничения."""
+    result = data.copy()
+    query = query.strip()
+    if query:
+        title_match = result["title"].fillna("").str.contains(query, case=False, regex=False)
+        skills_match = result["skills"].apply(
+            lambda values: query.casefold() in " ".join(values).casefold()
+            if isinstance(values, list)
+            else False
+        )
+        result = result[title_match | skills_match]
+    for column, selected in (
+        ("city", cities),
+        ("schedule", schedules),
+        ("experience", experiences),
+    ):
+        if selected:
+            result = result[result[column].isin(selected)]
+    if salary_only:
+        result = result[result["median_salary"].notna()]
+    return result.copy()
 
 
 def top_skills(data: pd.DataFrame) -> pd.DataFrame:
-    """Разворачивает JSON-массив навыков и считает десять самых частых."""
+    """Разворачивает массив навыков и считает десять самых частых."""
+    if data.empty:
+        return pd.DataFrame(columns=["Навык", "Вакансий"])
     skills = data["skills"].apply(
         lambda value: value if isinstance(value, list) else []
     ).explode()
@@ -109,121 +109,156 @@ def format_rubles(value: float | None) -> str:
     return "—" if pd.isna(value) else f"{value:,.0f} ₽".replace(",", " ")
 
 
-st.set_page_config(page_title="Вакансии аналитиков", page_icon="📊", layout="wide")
-st.title("Вакансии аналитиков данных")
-st.caption(
-    "Источники: открытые данные [«Работа России»](https://trudvsem.ru/) и "
-    "публичный каталог "
-    "[«Хабр Карьеры»](https://career.habr.com/). "
-    "Хранилище: PostgreSQL."
-)
+def load_styles() -> None:
+    css_path = Path(__file__).with_name("dashboard.css")
+    if css_path.exists():
+        st.markdown(f"<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
-if st.button("Обновить данные"):
-    load_data.clear()
-    load_salary_by_experience.clear()
 
-try:
-    df = load_data()
-except Exception as error:
-    st.error(f"Не удалось прочитать PostgreSQL: {error}")
-    st.info("Проверьте DATABASE_URL в .env и доступность PostgreSQL.")
-    st.stop()
+def reset_filters() -> None:
+    for key in FILTER_KEYS:
+        st.session_state.pop(key, None)
 
-if df.empty:
-    st.info("В базе пока нет вакансий. После загрузки нажмите «Обновить данные».")
-else:
-    published = pd.to_datetime(df["published_at"], errors="coerce")
-    if published.notna().any():
-        st.caption(
-            "Период публикации данных: "
-            f"{published.min():%d.%m.%Y} — {published.max():%d.%m.%Y}"
-        )
 
-dashboard_tab, sql_tab = st.tabs(["Дашборд", "SQL Playground"])
-with dashboard_tab:
-    filtered_df = apply_filters(df)
-    rub_salary = filtered_df.loc[
-        filtered_df["currency"].eq("RUR")
-        & filtered_df["median_salary"].notna()
-    ]
-    remote_share = (
-        filtered_df["schedule"].eq(REMOTE_SCHEDULE).mean() * 100
-        if len(filtered_df)
-        else 0
-    )
+def render_sidebar(data: pd.DataFrame) -> pd.DataFrame:
+    with st.sidebar:
+        st.markdown("### Параметры выборки")
+        st.caption("Оставьте список пустым, чтобы видеть все значения.")
+        query = st.text_input("Поиск", placeholder="Должность или навык", key="search_query")
+        cities = st.multiselect("Город", sorted(data["city"].dropna().unique()), placeholder="Все города", key="cities")
+        schedules = st.multiselect("Формат работы", sorted(data["schedule"].dropna().unique()), placeholder="Все форматы", key="schedules")
+        experiences = st.multiselect("Опыт", sorted(data["experience"].dropna().unique()), placeholder="Любой опыт", key="experiences")
+        salary_only = st.checkbox("Только с указанной зарплатой", key="salary_only")
+        st.button("Сбросить фильтры", width="stretch", on_click=reset_filters)
+        st.divider()
+        if st.button("Обновить данные", width="stretch", type="primary"):
+            load_data.clear()
+            st.rerun()
+        st.caption("Данные кэшируются на 5 минут.")
+    return filter_data(data, query, cities, schedules, experiences, salary_only)
 
-    total, salary, remote = st.columns(3)
-    total.metric("Всего вакансий", f"{len(filtered_df):,}".replace(",", " "))
-    salary.metric("Медианная зарплата", format_rubles(rub_salary["median_salary"].median()))
-    remote.metric("Доля удалёнки", f"{remote_share:.1f}%")
-    st.caption("Зарплатные показатели рассчитаны по вакансиям с зарплатой в рублях.")
 
-    left, right = st.columns(2)
+def render_metrics(data: pd.DataFrame) -> None:
+    rub_salary = data.loc[data["currency"].eq("RUR") & data["median_salary"].notna()]
+    remote_share = data["schedule"].eq(REMOTE_SCHEDULE).mean() * 100 if len(data) else 0
+    salary_share = data["median_salary"].notna().mean() * 100 if len(data) else 0
+    columns = st.columns(4)
+    columns[0].metric("Вакансий", f"{len(data):,}".replace(",", " "))
+    columns[1].metric("Медианная зарплата", format_rubles(rub_salary["median_salary"].median()))
+    columns[2].metric("Удалённый формат", f"{remote_share:.0f}%")
+    columns[3].metric("С указанной зарплатой", f"{salary_share:.0f}%")
+
+
+def render_overview(data: pd.DataFrame) -> None:
+    render_metrics(data)
+    st.caption("Зарплатные показатели рассчитаны только для вакансий в рублях.")
+    skills_data = top_skills(data)
+    rub_salary = data.loc[data["currency"].eq("RUR") & data["median_salary"].notna()]
+    left, right = st.columns(2, gap="large")
     with left:
-        skills_chart = px.bar(
-            top_skills(filtered_df),
-            x="Вакансий",
-            y="Навык",
-            orientation="h",
-            title="Топ-10 навыков",
-        )
-        skills_chart.update_layout(yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(skills_chart, width="stretch")
+        st.markdown("#### Востребованные навыки")
+        if skills_data.empty:
+            st.info("Для выбранных вакансий навыки не указаны.")
+        else:
+            chart = px.bar(skills_data, x="Вакансий", y="Навык", orientation="h", color_discrete_sequence=["#0F766E"])
+            chart.update_layout(yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
     with right:
-        salary_chart = px.box(
-            rub_salary,
-            x="experience",
-            y="median_salary",
-            points="outliers",
-            title="Зарплата по уровню опыта",
-            labels={"experience": "Опыт", "median_salary": "Зарплата, ₽"},
-        )
-        st.plotly_chart(salary_chart, width="stretch")
+        st.markdown("#### Зарплата по опыту")
+        if rub_salary.empty:
+            st.info("В выборке нет зарплат в рублях.")
+        else:
+            chart = px.box(
+                rub_salary,
+                x="experience",
+                y="median_salary",
+                points="outliers",
+                labels={"experience": "Опыт", "median_salary": "Зарплата, ₽"},
+                color_discrete_sequence=["#0F766E"],
+            )
+            st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
+    st.markdown("#### География вакансий")
+    city_data = data["city"].fillna("Не указан").value_counts().head(10).rename_axis("Город").reset_index(name="Вакансий")
+    city_chart = px.bar(city_data, x="Город", y="Вакансий", color_discrete_sequence=["#5E8078"])
+    st.plotly_chart(city_chart, width="stretch", config={"displayModeBar": False})
 
-    st.subheader("Вакансии")
-    table = filtered_df.rename(
-        columns={
-            "title": "Название",
-            "city": "Город",
-            "experience": "Опыт",
-            "schedule": "График",
-            "salary_from": "Зарплата от",
-            "salary_to": "Зарплата до",
-            "currency": "Валюта",
-            "skills": "Навыки",
-            "url": "Ссылка",
-        }
-    )
+
+def render_vacancies(data: pd.DataFrame) -> None:
+    st.markdown(f"#### Найдено вакансий: {len(data):,}".replace(",", " "))
+    table = data.copy()
+    table["skills"] = table["skills"].apply(lambda value: ", ".join(value) if isinstance(value, list) else "")
+    table = table.rename(columns={"title": "Вакансия", "city": "Город", "experience": "Опыт", "schedule": "Формат", "median_salary": "Оценка зарплаты", "skills": "Навыки", "url": "Ссылка"})
     st.dataframe(
-        table[
-            [
-                "Название",
-                "Город",
-                "Опыт",
-                "График",
-                "Зарплата от",
-                "Зарплата до",
-                "Валюта",
-                "Навыки",
-                "Ссылка",
-            ]
-        ],
+        table[["Вакансия", "Город", "Опыт", "Формат", "Оценка зарплаты", "Навыки", "Ссылка"]],
         hide_index=True,
         width="stretch",
         column_config={
-            "Ссылка": st.column_config.LinkColumn(
-                "Ссылка", display_text="Открыть вакансию"
-            )
+            "Оценка зарплаты": st.column_config.NumberColumn(format="%.0f ₽"),
+            "Ссылка": st.column_config.LinkColumn("Источник", display_text="Открыть ↗"),
         },
     )
 
-with sql_tab:
-    st.subheader("Средняя зарплата по грейдам")
-    st.caption(
-        "Результат SQL-запроса с GROUP BY experience; "
-        "учитываются только рублёвые зарплаты."
+
+def render_methodology(data: pd.DataFrame) -> None:
+    st.markdown("#### Как читать показатели")
+    st.markdown(
+        """
+        - Если указаны обе границы зарплаты, используется середина вилки; если одна — её значение.
+        - В зарплатных графиках учитываются только значения в рублях.
+        - Навыки считаются по числу вакансий, в которых они указаны.
+        - Данные поступают из открытых источников и могут не отражать весь рынок.
+        """
     )
+    with st.expander("Средняя зарплата по требуемому опыту"):
+        salaries = data.loc[data["currency"].eq("RUR") & data["median_salary"].notna()].copy()
+        salaries["experience"] = salaries["experience"].fillna("Не указан")
+        summary = (
+            salaries.groupby("experience", as_index=False)
+            .agg(
+                vacancies_count=("id", "count"),
+                average_salary_rub=("median_salary", "mean"),
+            )
+            .sort_values("average_salary_rub", ascending=False)
+            .rename(columns={"experience": "Опыт", "vacancies_count": "Вакансий", "average_salary_rub": "Средняя зарплата, ₽"})
+        )
+        st.dataframe(
+            summary,
+            hide_index=True,
+            width="stretch",
+            column_config={"Средняя зарплата, ₽": st.column_config.NumberColumn(format="%.0f ₽")},
+        )
+
+
+def main() -> None:
+    st.set_page_config(page_title="Рынок вакансий аналитиков", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+    load_styles()
+    st.title("Рынок вакансий аналитиков")
+    st.caption("Интерактивный срез открытых вакансий из «Работы России» и «Хабр Карьеры».")
     try:
-        st.dataframe(load_salary_by_experience(), hide_index=True, width="stretch")
-    except Exception as error:
-        st.error(f"Не удалось выполнить агрегирующий запрос: {error}")
+        with st.spinner("Загружаем актуальную выборку…"):
+            data = load_data()
+    except Exception:
+        st.error("Не удалось подключиться к базе данных.")
+        st.info("Проверьте DATABASE_URL и доступность PostgreSQL, затем обновите страницу.")
+        st.stop()
+    if data.empty:
+        st.info("В базе пока нет вакансий. Сначала запустите загрузку данных, затем обновите страницу.")
+        st.stop()
+    filtered = render_sidebar(data)
+    published = pd.to_datetime(data["published_at"], errors="coerce")
+    if published.notna().any():
+        st.caption(f"Публикации в базе: {published.min():%d.%m.%Y} — {published.max():%d.%m.%Y}")
+    if filtered.empty:
+        st.warning("По выбранным условиям вакансий нет. Измените параметры или сбросьте фильтры.")
+        st.stop()
+    overview_tab, vacancies_tab, methodology_tab = st.tabs(["Обзор рынка", "Вакансии", "Методика"])
+    with overview_tab:
+        render_overview(filtered)
+    with vacancies_tab:
+        render_vacancies(filtered)
+    with methodology_tab:
+        render_methodology(filtered)
+
+
+if __name__ == "__main__":
+    main()

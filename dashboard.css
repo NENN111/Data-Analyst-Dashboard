@@ -1,0 +1,23 @@
+:root {
+  --dashboard-ink: #17211d;
+  --dashboard-muted: #62706a;
+  --dashboard-line: #dce5e1;
+  --dashboard-surface: #ffffff;
+}
+
+.stApp { color: var(--dashboard-ink); }
+.block-container { max-width: 1280px; padding-top: 2.5rem; padding-bottom: 4rem; }
+h1 { letter-spacing: -0.035em; line-height: 1.08; }
+h4 { letter-spacing: -0.015em; margin-top: 1.25rem; }
+[data-testid="stMetric"] { min-height: 116px; padding: 1rem 1.1rem; border: 1px solid var(--dashboard-line); border-radius: 10px; background: var(--dashboard-surface); }
+[data-testid="stMetricLabel"] { color: var(--dashboard-muted); }
+[data-testid="stMetricValue"] { color: var(--dashboard-ink); letter-spacing: -0.025em; }
+[data-testid="stSidebar"] { border-right: 1px solid var(--dashboard-line); }
+[data-baseweb="tab-list"] { gap: 1.25rem; border-bottom: 1px solid var(--dashboard-line); }
+[data-baseweb="tab"] { padding-left: 0; padding-right: 0; }
+.stButton > button:focus-visible, input:focus-visible { outline: 3px solid rgba(15, 118, 110, 0.28); outline-offset: 2px; }
+
+@media (max-width: 768px) {
+  .block-container { padding-top: 1.5rem; }
+  [data-testid="stMetric"] { min-height: auto; }
+}
