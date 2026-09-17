@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from app import filter_data, format_rubles, top_skills
+from app import city_options, filter_data, format_rubles, split_cities, top_skills
 
 
 class DashboardHelpersTest(unittest.TestCase):
@@ -19,7 +19,7 @@ class DashboardHelpersTest(unittest.TestCase):
                 },
                 {
                     "title": "BI-аналитик",
-                    "city": "Казань",
+                    "city": "Город Москва, Санкт-петербург, Казань",
                     "schedule": "Полный день",
                     "experience": "Нет опыта",
                     "skills": ["SQL", "Power BI"],
@@ -33,7 +33,10 @@ class DashboardHelpersTest(unittest.TestCase):
 
     def test_search_covers_title_and_skills(self):
         self.assertEqual(filter_data(self.data, query="python").iloc[0]["city"], "Москва")
-        self.assertEqual(filter_data(self.data, query="BI-аналитик").iloc[0]["city"], "Казань")
+        self.assertEqual(
+            filter_data(self.data, query="BI-аналитик").iloc[0]["city"],
+            "Город Москва, Санкт-петербург, Казань",
+        )
 
     def test_combined_filters_and_salary_flag(self):
         result = filter_data(
@@ -48,6 +51,17 @@ class DashboardHelpersTest(unittest.TestCase):
         self.assertEqual(top_skills(self.data).iloc[0].to_dict(), {"Навык": "SQL", "Вакансий": 2})
         self.assertEqual(format_rubles(150000), "150 000 ₽")
         self.assertEqual(format_rubles(None), "—")
+
+    def test_multi_city_values_are_normalized_and_filterable(self):
+        self.assertEqual(
+            split_cities("Город Москва, Санкт-петербург, Москва"),
+            ["Москва", "Санкт-Петербург"],
+        )
+        self.assertEqual(city_options(self.data), ["Казань", "Москва", "Санкт-Петербург"])
+        self.assertEqual(
+            filter_data(self.data, cities=["Санкт-Петербург"])["title"].tolist(),
+            ["BI-аналитик"],
+        )
 
 
 if __name__ == "__main__":

@@ -19,6 +19,10 @@ MEDIAN_SALARY_SQL = """CASE
     ELSE COALESCE(salary_from, salary_to)
 END"""
 FILTER_KEYS = ("search_query", "cities", "schedules", "experiences", "salary_only")
+CITY_NAMES = {
+    "москва": "Москва",
+    "санкт-петербург": "Санкт-Петербург",
+}
 
 
 def read_sql(query: TextClause) -> pd.DataFrame:
@@ -77,16 +81,43 @@ def filter_data(
             else False
         )
         result = result[title_match | skills_match]
-    for column, selected in (
-        ("city", cities),
-        ("schedule", schedules),
-        ("experience", experiences),
-    ):
+    if cities:
+        selected_cities = set(cities)
+        result = result[
+            result["city"].apply(
+                lambda value: bool(selected_cities.intersection(split_cities(value)))
+            )
+        ]
+    for column, selected in (("schedule", schedules), ("experience", experiences)):
         if selected:
             result = result[result[column].isin(selected)]
     if salary_only:
         result = result[result["median_salary"].notna()]
     return result.copy()
+
+
+def normalize_city_name(value: str) -> str:
+    """Приводит вариант названия города к единому отображению."""
+    city = " ".join(value.strip().split())
+    if city.casefold().startswith("город "):
+        city = city[6:].strip()
+    return CITY_NAMES.get(city.casefold(), city or "Не указан")
+
+
+def split_cities(value: object) -> list[str]:
+    """Разделяет перечисление городов и удаляет дубликаты с сохранением порядка."""
+    if not isinstance(value, str) or not value.strip():
+        return ["Не указан"]
+    cities = [normalize_city_name(part) for part in value.split(",")]
+    return list(dict.fromkeys(cities))
+
+
+def city_options(data: pd.DataFrame) -> list[str]:
+    """Возвращает отдельные нормализованные города для фильтра."""
+    return sorted(
+        {city for value in data["city"] for city in split_cities(value)},
+        key=str.casefold,
+    )
 
 
 def top_skills(data: pd.DataFrame) -> pd.DataFrame:
@@ -125,7 +156,7 @@ def render_sidebar(data: pd.DataFrame) -> pd.DataFrame:
         st.markdown("### Параметры выборки")
         st.caption("Оставьте список пустым, чтобы видеть все значения.")
         query = st.text_input("Поиск", placeholder="Должность или навык", key="search_query")
-        cities = st.multiselect("Город", sorted(data["city"].dropna().unique()), placeholder="Все города", key="cities")
+        cities = st.multiselect("Город", city_options(data), placeholder="Все города", key="cities")
         schedules = st.multiselect("Формат работы", sorted(data["schedule"].dropna().unique()), placeholder="Все форматы", key="schedules")
         experiences = st.multiselect("Опыт", sorted(data["experience"].dropna().unique()), placeholder="Любой опыт", key="experiences")
         salary_only = st.checkbox("Только с указанной зарплатой", key="salary_only")
@@ -178,14 +209,24 @@ def render_overview(data: pd.DataFrame) -> None:
             )
             st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
     st.markdown("#### География вакансий")
-    city_data = data["city"].fillna("Не указан").value_counts().head(10).rename_axis("Город").reset_index(name="Вакансий")
+    city_data = (
+        data["city"]
+        .apply(split_cities)
+        .explode()
+        .value_counts()
+        .head(10)
+        .rename_axis("Город")
+        .reset_index(name="Вакансий")
+    )
     city_chart = px.bar(city_data, x="Город", y="Вакансий", color_discrete_sequence=["#5E8078"])
     st.plotly_chart(city_chart, width="stretch", config={"displayModeBar": False})
+    st.caption("Вакансия с несколькими локациями учитывается отдельно в каждом указанном городе.")
 
 
 def render_vacancies(data: pd.DataFrame) -> None:
     st.markdown(f"#### Найдено вакансий: {len(data):,}".replace(",", " "))
     table = data.copy()
+    table["city"] = table["city"].apply(lambda value: ", ".join(split_cities(value)))
     table["skills"] = table["skills"].apply(lambda value: ", ".join(value) if isinstance(value, list) else "")
     table = table.rename(columns={"title": "Вакансия", "city": "Город", "experience": "Опыт", "schedule": "Формат", "median_salary": "Оценка зарплаты", "skills": "Навыки", "url": "Ссылка"})
     st.dataframe(
