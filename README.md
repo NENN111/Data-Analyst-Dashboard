@@ -1,7 +1,8 @@
 # Data Analyst Vacancies Dashboard
 
 Streamlit-дашборд анализирует вакансии аналитиков из открытых данных
-[«Работа России»](https://trudvsem.ru/) и публичного каталога
+[«Работа России»](https://trudvsem.ru/), официального API
+[SuperJob](https://api.superjob.ru/) и публичного каталога
 [«Хабр Карьеры»](https://career.habr.com/). Вакансии и навыки хранятся в
 PostgreSQL; повторная загрузка обновляет записи по стабильному ID источника.
 
@@ -35,6 +36,7 @@ PostgreSQL; повторная загрузка обновляет записи 
 | `.streamlit/config.toml` | Тема и минимальный режим панели Streamlit |
 | `db.py` | Подключение к PostgreSQL, модель и UPSERT |
 | `trudvsem_etl.py` | Загрузка открытых данных «Работы России» |
+| `superjob_etl.py` | Загрузка открытых вакансий через API SuperJob |
 | `habr_public_etl.py` | Загрузка публичного каталога «Хабр Карьеры» |
 | `habr_career_etl.py` | Дополнительная загрузка через OAuth API |
 | `tests/` | Модульные тесты ETL и расчётов дашборда |
@@ -74,8 +76,30 @@ PostgreSQL; повторная загрузка обновляет записи 
 
 ```powershell
 .\.venv\Scripts\python.exe trudvsem_etl.py --pages 5
+.\.venv\Scripts\python.exe superjob_etl.py
 .\.venv\Scripts\python.exe habr_public_etl.py
 .\.venv\Scripts\python.exe habr_career_etl.py
+```
+
+Для SuperJob зарегистрируйте приложение в [официальном кабинете
+API](https://api.superjob.ru/register/) и сохраните выданный **Secret key** в
+`.env`:
+
+```dotenv
+SUPERJOB_API_KEY=ваш_secret_key
+```
+
+Загрузчик запрашивает открытые вакансии по трём направлениям: аналитик данных,
+data analyst и продуктовый аналитик. Он обходит страницы ответа, отбрасывает
+нерелевантные заголовки, нормализует основные поля и выполняет UPSERT по
+стабильному ID `superjob:<id>`. Повторный запуск обновляет существующие записи,
+а не создаёт копии. Дополнительные запросы можно передать несколько раз:
+
+```powershell
+.\.venv\Scripts\python.exe superjob_etl.py `
+  --query "аналитик данных" `
+  --query "продуктовый аналитик" `
+  --max-pages 20
 ```
 
 `habr_public_etl.py` собирает публичные карточки вакансий аналитиков, соблюдает
@@ -236,9 +260,11 @@ ORDER BY vacancies_count DESC, city;
    Внешний URL нужен, потому что GitHub Actions подключается не из сети Render.
 4. Добавьте в GitHub секрет `HABR_CAREER_ACCESS_TOKEN` с OAuth2 access token
    активированного приложения Хабр Карьеры.
-5. Запустите workflow **Daily Vacancies ETL** вручную один раз в разделе Actions либо
+5. Добавьте секрет `SUPERJOB_API_KEY` с Secret key приложения SuperJob. Пока
+   секрет не задан, соответствующий шаг workflow будет безопасно пропущен.
+6. Запустите workflow **Daily Vacancies ETL** вручную один раз в разделе Actions либо
    дождитесь ежедневного запуска в 03:00 UTC. Скрипт создаст таблицу и выполнит
-   UPSERT данных из обоих источников, поэтому его безопасно запускать ежедневно.
+   UPSERT данных из источников, поэтому его безопасно запускать ежедневно.
 
 Для локального окружения используйте URL вида
 `postgresql+psycopg2://user:password@host:5432/database`. URL Render с
