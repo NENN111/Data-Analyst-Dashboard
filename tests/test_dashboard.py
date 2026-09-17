@@ -2,7 +2,15 @@ import unittest
 
 import pandas as pd
 
-from app import city_options, filter_data, format_rubles, split_cities, top_skills
+from app import (
+    city_options,
+    experience_options,
+    filter_data,
+    format_rubles,
+    normalize_experience,
+    split_cities,
+    top_skills,
+)
 
 
 class DashboardHelpersTest(unittest.TestCase):
@@ -60,6 +68,29 @@ class DashboardHelpersTest(unittest.TestCase):
         self.assertEqual(city_options(self.data), ["Казань", "Москва", "Санкт-Петербург"])
         self.assertEqual(
             filter_data(self.data, cities=["Санкт-Петербург"])["title"].tolist(),
+            ["BI-аналитик"],
+        )
+
+    def test_experience_grades_and_years_share_ordered_groups(self):
+        values = {
+            "Без опыта": "Без опыта / Intern",
+            "Intern": "Без опыта / Intern",
+            "От 1 года": "1–2 года / Junior",
+            "Middle": "3–4 года / Middle",
+            "От 4 лет": "3–4 года / Middle",
+            "Senior": "5+ лет / Senior",
+            "От 6 лет": "5+ лет / Senior",
+            None: "Не указан",
+        }
+        for value, expected in values.items():
+            self.assertEqual(normalize_experience(value), expected)
+
+        self.assertEqual(
+            experience_options(self.data),
+            ["Без опыта / Intern", "1–2 года / Junior"],
+        )
+        self.assertEqual(
+            filter_data(self.data, experiences=["Без опыта / Intern"])["title"].tolist(),
             ["BI-аналитик"],
         )
 

@@ -1,6 +1,7 @@
 """Streamlit-дашборд вакансий аналитиков из PostgreSQL."""
 
 from pathlib import Path
+import re
 import time
 
 import pandas as pd
@@ -23,6 +24,13 @@ CITY_NAMES = {
     "москва": "Москва",
     "санкт-петербург": "Санкт-Петербург",
 }
+EXPERIENCE_ORDER = (
+    "Без опыта / Intern",
+    "1–2 года / Junior",
+    "3–4 года / Middle",
+    "5+ лет / Senior",
+    "Не указан",
+)
 
 
 def read_sql(query: TextClause) -> pd.DataFrame:
@@ -88,9 +96,12 @@ def filter_data(
                 lambda value: bool(selected_cities.intersection(split_cities(value)))
             )
         ]
-    for column, selected in (("schedule", schedules), ("experience", experiences)):
-        if selected:
-            result = result[result[column].isin(selected)]
+    if schedules:
+        result = result[result["schedule"].isin(schedules)]
+    if experiences:
+        result = result[
+            result["experience"].apply(normalize_experience).isin(experiences)
+        ]
     if salary_only:
         result = result[result["median_salary"].notna()]
     return result.copy()
@@ -118,6 +129,40 @@ def city_options(data: pd.DataFrame) -> list[str]:
         {city for value in data["city"] for city in split_cities(value)},
         key=str.casefold,
     )
+
+
+def normalize_experience(value: object) -> str:
+    """Объединяет грейды и числовые требования в общую шкалу опыта."""
+    if not isinstance(value, str) or not value.strip():
+        return "Не указан"
+    normalized = " ".join(value.strip().split()).casefold()
+    if normalized in {"не указан", "не указано", "любой опыт"}:
+        return "Не указан"
+    if any(marker in normalized for marker in ("без опыта", "нет опыта", "intern", "стаж")):
+        return "Без опыта / Intern"
+    if any(marker in normalized for marker in ("senior", "старш", "ведущ")):
+        return "5+ лет / Senior"
+    if any(marker in normalized for marker in ("middle", "средн")):
+        return "3–4 года / Middle"
+    if any(marker in normalized for marker in ("junior", "младш")):
+        return "1–2 года / Junior"
+    years = re.search(r"\d+", normalized)
+    if years:
+        amount = int(years.group())
+        if amount == 0:
+            return "Без опыта / Intern"
+        if amount <= 2:
+            return "1–2 года / Junior"
+        if amount <= 4:
+            return "3–4 года / Middle"
+        return "5+ лет / Senior"
+    return "Не указан"
+
+
+def experience_options(data: pd.DataFrame) -> list[str]:
+    """Возвращает только присутствующие группы опыта в логичном порядке."""
+    present = set(data["experience"].apply(normalize_experience))
+    return [label for label in EXPERIENCE_ORDER if label in present]
 
 
 def top_skills(data: pd.DataFrame) -> pd.DataFrame:
@@ -158,7 +203,7 @@ def render_sidebar(data: pd.DataFrame) -> pd.DataFrame:
         query = st.text_input("Поиск", placeholder="Должность или навык", key="search_query")
         cities = st.multiselect("Город", city_options(data), placeholder="Все города", key="cities")
         schedules = st.multiselect("Формат работы", sorted(data["schedule"].dropna().unique()), placeholder="Все форматы", key="schedules")
-        experiences = st.multiselect("Опыт", sorted(data["experience"].dropna().unique()), placeholder="Любой опыт", key="experiences")
+        experiences = st.multiselect("Опыт", experience_options(data), placeholder="Любой опыт", key="experiences")
         salary_only = st.checkbox("Только с указанной зарплатой", key="salary_only")
         st.button("Сбросить фильтры", width="stretch", on_click=reset_filters)
         st.divider()
@@ -199,12 +244,16 @@ def render_overview(data: pd.DataFrame) -> None:
         if rub_salary.empty:
             st.info("В выборке нет зарплат в рублях.")
         else:
+            salary_chart_data = rub_salary.assign(
+                experience_group=rub_salary["experience"].apply(normalize_experience)
+            )
             chart = px.box(
-                rub_salary,
-                x="experience",
+                salary_chart_data,
+                x="experience_group",
                 y="median_salary",
                 points="outliers",
-                labels={"experience": "Опыт", "median_salary": "Зарплата, ₽"},
+                labels={"experience_group": "Опыт", "median_salary": "Зарплата, ₽"},
+                category_orders={"experience_group": list(EXPERIENCE_ORDER)},
                 color_discrete_sequence=["#0F766E"],
             )
             st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
@@ -227,6 +276,7 @@ def render_vacancies(data: pd.DataFrame) -> None:
     st.markdown(f"#### Найдено вакансий: {len(data):,}".replace(",", " "))
     table = data.copy()
     table["city"] = table["city"].apply(lambda value: ", ".join(split_cities(value)))
+    table["experience"] = table["experience"].apply(normalize_experience)
     table["skills"] = table["skills"].apply(lambda value: ", ".join(value) if isinstance(value, list) else "")
     table = table.rename(columns={"title": "Вакансия", "city": "Город", "experience": "Опыт", "schedule": "Формат", "median_salary": "Оценка зарплаты", "skills": "Навыки", "url": "Ссылка"})
     st.dataframe(
@@ -252,7 +302,7 @@ def render_methodology(data: pd.DataFrame) -> None:
     )
     with st.expander("Средняя зарплата по требуемому опыту"):
         salaries = data.loc[data["currency"].eq("RUR") & data["median_salary"].notna()].copy()
-        salaries["experience"] = salaries["experience"].fillna("Не указан")
+        salaries["experience"] = salaries["experience"].apply(normalize_experience)
         summary = (
             salaries.groupby("experience", as_index=False)
             .agg(
@@ -262,6 +312,10 @@ def render_methodology(data: pd.DataFrame) -> None:
             .sort_values("average_salary_rub", ascending=False)
             .rename(columns={"experience": "Опыт", "vacancies_count": "Вакансий", "average_salary_rub": "Средняя зарплата, ₽"})
         )
+        summary["Опыт"] = pd.Categorical(
+            summary["Опыт"], categories=EXPERIENCE_ORDER, ordered=True
+        )
+        summary = summary.sort_values("Опыт")
         st.dataframe(
             summary,
             hide_index=True,
@@ -274,7 +328,10 @@ def main() -> None:
     st.set_page_config(page_title="Рынок вакансий аналитиков", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
     load_styles()
     st.title("Рынок вакансий аналитиков")
-    st.caption("Интерактивный срез открытых вакансий из «Работы России» и «Хабр Карьеры».")
+    st.caption(
+        "Интерактивный срез открытых вакансий из «Работы России», "
+        "SuperJob и «Хабр Карьеры»."
+    )
     try:
         with st.spinner("Загружаем актуальную выборку…"):
             data = load_data()
