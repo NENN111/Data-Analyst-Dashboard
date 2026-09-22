@@ -16,6 +16,10 @@ jobs:
       HABR_CAREER_ACCESS_TOKEN: ${{ secrets.HABR_CAREER_ACCESS_TOKEN }}
       # Secret key зарегистрированного приложения SuperJob.
       SUPERJOB_API_KEY: ${{ secrets.SUPERJOB_API_KEY }}
+      # OAuth2-учётные данные приложения hh.ru.
+      HH_ACCESS_TOKEN: ${{ secrets.HH_ACCESS_TOKEN }}
+      HH_CLIENT_ID: ${{ secrets.HH_CLIENT_ID }}
+      HH_CLIENT_SECRET: ${{ secrets.HH_CLIENT_SECRET }}
     steps:
       - name: Получить код репозитория
         uses: actions/checkout@v4
@@ -31,6 +35,10 @@ jobs:
 
       - name: Загрузить вакансии из Работа России
         run: python trudvsem_etl.py --pages 5
+
+      - name: Загрузить вакансии из hh.ru
+        if: ${{ env.HH_ACCESS_TOKEN != '' || (env.HH_CLIENT_ID != '' && env.HH_CLIENT_SECRET != '') }}
+        run: python hh_etl.py
 
       - name: Загрузить вакансии из SuperJob
         if: ${{ env.SUPERJOB_API_KEY != '' }}
