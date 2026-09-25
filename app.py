@@ -50,8 +50,8 @@ def read_sql(query: TextClause) -> pd.DataFrame:
 def load_data() -> pd.DataFrame:
     """Кэшированно загружает данные страницами из PostgreSQL."""
     frames: list[pd.DataFrame] = []
-    # Короткие ответы устойчивее проходят через внешнее соединение Render.
-    page_size = 5
+    # Умеренные страницы сокращают число внешних соединений с Render.
+    page_size = 100
     offset = 0
     while True:
         query = text(f"""
