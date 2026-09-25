@@ -37,15 +37,17 @@ jobs:
         run: python trudvsem_etl.py --pages 5
 
       - name: Загрузить вакансии из hh.ru
-        if: ${{ env.HH_ACCESS_TOKEN != '' || (env.HH_CLIENT_ID != '' && env.HH_CLIENT_SECRET != '') }}
+        if: ${{ !cancelled() }}
         run: python hh_etl.py
 
       - name: Загрузить вакансии из SuperJob
-        if: ${{ env.SUPERJOB_API_KEY != '' }}
+        if: ${{ !cancelled() && env.SUPERJOB_API_KEY != '' }}
         run: python superjob_etl.py
 
       - name: Загрузить публичные вакансии из Хабр Карьеры
+        if: ${{ !cancelled() }}
         run: python habr_public_etl.py
 
       - name: Загрузить вакансии из Хабр Карьеры
+        if: ${{ !cancelled() }}
         run: python habr_career_etl.py
