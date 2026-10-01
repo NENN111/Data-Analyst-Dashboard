@@ -12,5 +12,8 @@ if not exist ".env" (
     pause
     exit /b 1
 )
+if not defined DASHBOARD_FETCH_PAGE_SIZE set "DASHBOARD_FETCH_PAGE_SIZE=5"
+if not defined DASHBOARD_FETCH_WORKERS set "DASHBOARD_FETCH_WORKERS=4"
+if not defined DASHBOARD_CACHE_TTL_SECONDS set "DASHBOARD_CACHE_TTL_SECONDS=3600"
 ".venv\Scripts\python.exe" -m streamlit run app.py --server.address 127.0.0.1 --server.port 8501
 if errorlevel 1 pause

@@ -1,5 +1,7 @@
 """Streamlit-дашборд вакансий аналитиков из PostgreSQL."""
 
+from concurrent.futures import ThreadPoolExecutor
+import os
 from pathlib import Path
 import re
 import time
@@ -15,6 +17,9 @@ from db import read_engine as engine
 
 
 REMOTE_SCHEDULE = "Удаленная работа"
+FETCH_PAGE_SIZE = int(os.getenv("DASHBOARD_FETCH_PAGE_SIZE", "100"))
+FETCH_WORKERS = int(os.getenv("DASHBOARD_FETCH_WORKERS", "1"))
+CACHE_TTL_SECONDS = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "300"))
 MEDIAN_SALARY_SQL = """CASE
     WHEN salary_from IS NOT NULL AND salary_to IS NOT NULL THEN (salary_from + salary_to) / 2.0
     ELSE COALESCE(salary_from, salary_to)
@@ -46,27 +51,40 @@ def read_sql(query: TextClause) -> pd.DataFrame:
     raise RuntimeError("Не удалось выполнить SQL-запрос")
 
 
-@st.cache_data(ttl=300)
+def load_page(offset: int) -> pd.DataFrame:
+    """Читает одну страницу через отдельное соединение."""
+    query = text(f"""
+        SELECT id, title, salary_from, salary_to, salary_gross, currency,
+               experience, employment, schedule, city, skills, url, published_at,
+               {MEDIAN_SALARY_SQL} AS median_salary
+        FROM vacancies
+        ORDER BY published_at DESC NULLS LAST, id
+        LIMIT {FETCH_PAGE_SIZE} OFFSET {offset}
+    """)
+    return read_sql(query)
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_data() -> pd.DataFrame:
-    """Кэшированно загружает данные страницами из PostgreSQL."""
-    frames: list[pd.DataFrame] = []
-    # Умеренные страницы сокращают число внешних соединений с Render.
-    page_size = 100
-    offset = 0
-    while True:
-        query = text(f"""
-            SELECT id, title, salary_from, salary_to, salary_gross, currency,
-                   experience, employment, schedule, city, skills, url, published_at,
-                   {MEDIAN_SALARY_SQL} AS median_salary
-            FROM vacancies
-            ORDER BY published_at DESC NULLS LAST, id
-            LIMIT {page_size} OFFSET {offset}
-        """)
-        page = read_sql(query)
-        frames.append(page)
-        if len(page) < page_size:
-            break
-        offset += page_size
+    """Загружает всю выборку из PostgreSQL и кэширует результат."""
+    if FETCH_PAGE_SIZE < 1 or FETCH_WORKERS < 1:
+        raise ValueError("Размер страницы и число загрузчиков должны быть положительными")
+
+    if FETCH_WORKERS > 1:
+        total = int(read_sql(text("SELECT COUNT(*) AS total FROM vacancies")).iloc[0, 0])
+        offsets = range(0, total, FETCH_PAGE_SIZE)
+        with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+            frames = list(pool.map(load_page, offsets))
+    else:
+        frames = []
+        offset = 0
+        while True:
+            page = load_page(offset)
+            frames.append(page)
+            if len(page) < FETCH_PAGE_SIZE:
+                break
+            offset += FETCH_PAGE_SIZE
+
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
@@ -210,7 +228,7 @@ def render_sidebar(data: pd.DataFrame) -> pd.DataFrame:
         if st.button("Обновить данные", width="stretch", type="primary"):
             load_data.clear()
             st.rerun()
-        st.caption("Данные кэшируются на 5 минут.")
+        st.caption(f"Данные кэшируются на {CACHE_TTL_SECONDS // 60} минут.")
     return filter_data(data, query, cities, schedules, experiences, salary_only)
 
 
