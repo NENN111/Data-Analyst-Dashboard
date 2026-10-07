@@ -46,7 +46,7 @@
 
 ## Запуск проекта
 
-Для просмотра полной выборки нужна строка подключения к существующей PostgreSQL на Render. Сохраните её как `DATABASE_URL` в `.env` в корне проекта. Команды ниже рассчитаны на PowerShell и Python 3.11+:
+Для просмотра полной выборки нужна строка подключения к PostgreSQL с загруженными вакансиями. Для Neon используйте **Connect → Connection string** с включённым pooling, а не адрес REST API. Сохраните её как `DATABASE_URL` в `.env` в корне проекта. Команды ниже рассчитаны на PowerShell и Python 3.11+:
 
 ```powershell
 python -m venv .venv

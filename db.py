@@ -19,6 +19,7 @@ from sqlalchemy import (
     create_engine,
 )
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import NullPool
@@ -41,18 +42,26 @@ def database_url() -> str:
     return url
 
 
-# Render закрывает внешние соединения агрессивнее локального PostgreSQL. NullPool
-# создаёт свежее соединение для каждого запроса и не возвращает закрытое в пул.
+# Для Neon повторно используем соединения, чтобы чтение страниц не требовало
+# отдельного TLS-подключения каждый раз. Проверка перед запросом восстанавливает
+# соединение после простоя базы. Для остальных окружений сохраняем NullPool.
+connection_url = database_url()
+connection_host = make_url(connection_url).host or ""
+pool_options: dict[str, Any] = (
+    {"pool_size": 4, "max_overflow": 0, "pool_pre_ping": True, "pool_recycle": 300}
+    if connection_host.endswith(".neon.tech")
+    else {"poolclass": NullPool}
+)
 engine = create_engine(
-    database_url(),
+    connection_url,
     isolation_level="AUTOCOMMIT",
     use_native_hstore=False,
-    poolclass=NullPool,
     connect_args={"connect_timeout": 15},
+    **pool_options,
 )
 
-# Дашборд использует тот же настроенный engine; навыки хранятся в JSON,
-# поэтому автоматическое определение PostgreSQL hstore отключено выше.
+# Для обычного PostgreSQL дашборд использует этот engine; Neon читается по HTTPS.
+# Навыки хранятся в JSON, поэтому определение PostgreSQL hstore отключено выше.
 read_engine = engine
 
 
@@ -91,12 +100,12 @@ def upsert_vacancies(vacancies_data: list[dict[str, Any]]) -> None:
     if not vacancies_data:
         return
     unique_rows = list({row["id"]: row for row in vacancies_data}.values())
-    # Небольшие отдельные выражения не перегружают внешний PostgreSQL Render.
-    # При сетевом разрыве повторяем только текущую запись через новое соединение.
+    # Пакеты сокращают число сетевых запросов к PostgreSQL.
+    # При разрыве повторяем текущий пакет; UPSERT не создаёт дубликатов.
     connection = None
     try:
-        for row in unique_rows:
-            statement = insert(Vacancy).values(row)
+        for offset in range(0, len(unique_rows), 5):
+            statement = insert(Vacancy).values(unique_rows[offset : offset + 5])
             update_columns = {
                 column.name: getattr(statement.excluded, column.name)
                 for column in Vacancy.__table__.columns

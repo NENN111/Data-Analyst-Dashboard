@@ -1,6 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from app import (
     city_options,
@@ -8,6 +11,7 @@ from app import (
     filter_data,
     format_rubles,
     normalize_experience,
+    read_sql,
     split_cities,
     top_skills,
 )
@@ -93,6 +97,54 @@ class DashboardHelpersTest(unittest.TestCase):
             filter_data(self.data, experiences=["Без опыта / Intern"])["title"].tolist(),
             ["BI-аналитик"],
         )
+
+
+class DashboardDatabaseTest(unittest.TestCase):
+    def setUp(self):
+        # Эти проверки относятся к обычному PostgreSQL; Neon использует HTTPS.
+        patcher = patch("app.neon_http_endpoint", return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def wrapped_connection_error():
+        error = pd.errors.DatabaseError("Connection interrupted")
+        error.__cause__ = OperationalError("SELECT 1", None, ConnectionError())
+        return error
+
+    def test_pandas_wrapped_connection_error_is_retried(self):
+        expected = pd.DataFrame({"total": [28]})
+        with (
+            patch("app.pd.read_sql_query", side_effect=[self.wrapped_connection_error(), expected]) as query,
+            patch("app.engine.dispose") as dispose,
+            patch("app.time.sleep"),
+        ):
+            self.assertIs(read_sql(text("SELECT COUNT(*) AS total FROM vacancies")), expected)
+        self.assertEqual(query.call_count, 2)
+        dispose.assert_called_once()
+
+    def test_unrelated_database_error_is_not_retried(self):
+        error = pd.errors.DatabaseError("Undefined table")
+        with (
+            patch("app.pd.read_sql_query", side_effect=error) as query,
+            patch("app.engine.dispose") as dispose,
+            patch("app.time.sleep") as sleep,
+        ):
+            with self.assertRaises(pd.errors.DatabaseError):
+                read_sql(text("SELECT * FROM missing_table"))
+        query.assert_called_once()
+        dispose.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_persistent_connection_failure_stops_after_three_attempts(self):
+        with (
+            patch("app.pd.read_sql_query", side_effect=self.wrapped_connection_error()) as query,
+            patch("app.engine.dispose"),
+            patch("app.time.sleep"),
+        ):
+            with self.assertRaises(pd.errors.DatabaseError):
+                read_sql(text("SELECT 1"))
+        self.assertEqual(query.call_count, 3)
 
 
 if __name__ == "__main__":

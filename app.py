@@ -14,10 +14,11 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql.elements import TextClause
 
 from db import read_engine as engine
+from neon_http import neon_http_endpoint, read_neon_sql
 
 
 REMOTE_SCHEDULE = "Удаленная работа"
-FETCH_PAGE_SIZE = int(os.getenv("DASHBOARD_FETCH_PAGE_SIZE", "100"))
+FETCH_PAGE_SIZE = int(os.getenv("DASHBOARD_FETCH_PAGE_SIZE", "50"))
 FETCH_WORKERS = int(os.getenv("DASHBOARD_FETCH_WORKERS", "1"))
 CACHE_TTL_SECONDS = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "300"))
 MEDIAN_SALARY_SQL = """CASE
@@ -40,10 +41,17 @@ EXPERIENCE_ORDER = (
 
 def read_sql(query: TextClause) -> pd.DataFrame:
     """Повторяет SELECT после кратковременного разрыва внешнего соединения."""
+    if neon_http_endpoint() is not None:
+        return read_neon_sql(query)
     for attempt in range(3):
         try:
             return pd.read_sql_query(query, engine)
-        except OperationalError:
+        except (OperationalError, pd.errors.DatabaseError) as exc:
+            # pandas оборачивает ошибки SQLAlchemy; повторяем только сетевой сбой.
+            if isinstance(exc, pd.errors.DatabaseError) and not isinstance(
+                exc.__cause__, OperationalError
+            ):
+                raise
             engine.dispose()
             if attempt == 2:
                 raise
